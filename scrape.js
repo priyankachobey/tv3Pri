@@ -67,7 +67,8 @@ export async function scrapeChart(page, url) {
           const text = el.innerText.trim();
           return text === "∅" ? "None" : text;
         });
-        return allValues.slice(1);
+        return ["", "", ...allValues.slice(1)];
+
       }
     );
 
@@ -77,4 +78,5 @@ export async function scrapeChart(page, url) {
     return ["ERROR"];
   }
 }
+
 
