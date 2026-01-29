@@ -7,29 +7,43 @@ async function safeGoto(page, url, retries = 3) {
     } catch (err) {
       console.warn(`Retry ${i + 1} for ${url} – ${err.message}`);
       if (i === retries - 1) return false;
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 3000));
     }
   }
 }
 
-// make fixed length array so columns never shift
+// always keep same column count
 function fixedLength(arr, len, fill = "") {
   if (arr.length >= len) return arr.slice(0, len);
   return arr.concat(Array(len - arr.length).fill(fill));
 }
 
+// safe date builder (no //2025)
+function buildDate(day, month, year) {
+  if (!year) return "";
+  if (!day && !month) return `${year}`;
+  if (!day) day = "01";
+  if (!month) month = "01";
+  return `${String(day).padStart(2,"0")}/${String(month).padStart(2,"0")}/${year}`;
+}
+
 export async function scrapeChart(page, url) {
-  const EXPECTED_VALUE_COUNT = 25; 
-  // how many legend values your sheet has after shifting 2 columns
-  // change this number if your sheet has more/less columns
+  const EXPECTED_VALUE_COUNT = 25; // change if your sheet needs more/less columns
 
   try {
     const success = await safeGoto(page, url);
 
-    // if page not loaded → return same column count
     if (!success) {
       return ["", "", ...fixedLength(["NAVIGATION FAILED"], EXPECTED_VALUE_COUNT)];
     }
+
+    // example date creation (edit source if you scrape real day/month/year)
+    const now = new Date();
+    const dateString = buildDate(
+      now.getDate(),
+      now.getMonth() + 1,
+      now.getFullYear()
+    );
 
     const values = await page.$$eval(
       '[data-qa-id="legend"] .item-l31H9iuA.study-l31H9iuA',
@@ -53,8 +67,10 @@ export async function scrapeChart(page, url) {
       }
     );
 
-    // shift by 2 columns but keep fixed total length
-    return ["", "", ...fixedLength(values, EXPECTED_VALUE_COUNT)];
+    // first two blanks = shift by 2 columns
+    // then fixed number of values so sheet never shifts
+    return ["", "", dateString, ...fixedLength(values, EXPECTED_VALUE_COUNT - 1)];
+
   } catch (err) {
     console.error(`Error scraping ${url}:`, err.message);
     return ["", "", ...fixedLength(["ERROR"], EXPECTED_VALUE_COUNT)];
