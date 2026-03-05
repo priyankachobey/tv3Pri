@@ -1,8 +1,8 @@
-name: T3 Shard 0 (Rows 1-500)
+name: T3 Shard 1 (Rows 501-1000)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 11 * * 1-5'
+    - cron: '35 11 * * 1-5'
 jobs:
   scrape:
     runs-on: ubuntu-22.04
@@ -16,7 +16,7 @@ jobs:
           echo '${{ secrets.TRADINGVIEW_COOKIES }}' > cookies.json
       - name: Run scraper
         env:
-          SHARD_INDEX: 0
+          SHARD_INDEX: 1
           SHARD_SIZE: 500
-          CHECKPOINT_FILE: checkpoint_g3_0.txt
+          CHECKPOINT_FILE: checkpoint_g3_1.txt
         run: python run_scraper.py
