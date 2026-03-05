@@ -105,7 +105,7 @@ except Exception as e:
 
 driver = create_driver()
 batch_list = []
-BATCH_SIZE = 25 
+BATCH_SIZE = 10 
 current_date = date.today().strftime("%m/%d/%Y")
 
 try:
