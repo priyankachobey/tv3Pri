@@ -16,18 +16,18 @@ import gspread
 from webdriver_manager.chrome import ChromeDriverManager
 
 def log(msg):
-    print(msg, flush=True)
+    # Added timestamp for better tracking in GitHub Actions
+    t = time.strftime("%H:%M:%S")
+    print(f"[{t}] {msg}", flush=True)
 
 # ---------------- CONFIG & RANGE CALCULATION ---------------- #
 SHARD_INDEX = int(os.getenv("SHARD_INDEX", "0"))
-SHARD_SIZE  = int(os.getenv("SHARD_SIZE", "500")) # Each shard handles 500 rows
+SHARD_SIZE  = int(os.getenv("SHARD_SIZE", "500"))
 
-# Calculate start and end for this specific shard
 START_ROW = SHARD_INDEX * SHARD_SIZE
 END_ROW   = START_ROW + SHARD_SIZE
 
 checkpoint_file = os.getenv("CHECKPOINT_FILE", f"checkpoint_{SHARD_INDEX}.txt")
-# Resume from checkpoint, but ensure it doesn't start before the shard's assigned START_ROW
 if os.path.exists(checkpoint_file):
     last_i = max(int(open(checkpoint_file).read().strip()), START_ROW)
 else:
@@ -37,7 +37,7 @@ CHROME_DRIVER_PATH = ChromeDriverManager().install()
 
 # ---------------- BROWSER FACTORY ---------------- #
 def create_driver():
-    log(f"🌐 [Shard {SHARD_INDEX}] Range {START_ROW}-{END_ROW} | Initializing Chrome...")
+    log(f"🌐 [Shard {SHARD_INDEX}] Range {START_ROW+1}-{END_ROW} | Initializing...")
     opts = Options()
     opts.page_load_strategy = "normal" 
     opts.add_argument("--headless=new")
@@ -71,21 +71,21 @@ def create_driver():
 
 # ---------------- SCRAPER ---------------- #
 def scrape_tradingview(driver, url, url_type=""):
-    log(f"   📡 Navigating to {url_type}: {url}")
-    for attempt in range(3):
+    log(f"   📡 Navigating {url_type}: {url}")
+    for attempt in range(2):
         try:
             driver.get(url)
             try:
-                WebDriverWait(driver, 60).until(
+                WebDriverWait(driver, 45).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "[class*='valueValue']"))
                 )
-            except TimeoutException:
-                log(f"   ⏳ Elements didn't appear quickly, forcing load...")
+            except:
+                pass
 
             driver.execute_script("window.scrollTo(0, 400);")
             time.sleep(2)
             driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(25) 
+            time.sleep(20) 
             
             soup = BeautifulSoup(driver.page_source, "html.parser")
             v1 = [el.get_text().strip() for el in soup.find_all("div", class_="valueValue-l31H9iuA apply-common-tooltip")]
@@ -93,17 +93,19 @@ def scrape_tradingview(driver, url, url_type=""):
             v3 = [el.text.strip() for el in driver.find_elements(By.XPATH, "//div[contains(@class, 'value') and contains(@class, 'Value')]")]
             
             raw_values = v1 or v2 or v3
-            final_values = [str(v) for v in raw_values if v is not None]
+            final_values = [str(v) for v in raw_values if v and v.strip()]
             
             if final_values:
+                # NEW: Clearer verification logs
+                log(f"   📊 Found {len(final_values)} values for {url_type}")
+                log(f"   📝 Data Preview: {final_values[:8]}...") 
                 return final_values
             else:
-                log(f"   ⚠️ {url_type} EMPTY. Retrying...")
+                log(f"   ⚠️ {url_type} No values found. Refreshing...")
                 driver.refresh()
                 time.sleep(10)
         except Exception as e:
-            log(f"   ❌ {url_type} ERROR: {str(e)[:80]}")
-            time.sleep(5)
+            log(f"   ❌ {url_type} ERROR: {str(e)[:50]}")
     return []
 
 # ---------------- SETUP ---------------- #
@@ -116,26 +118,28 @@ try:
     company_list = sheet_main.col_values(1)
     url_d_list = sheet_main.col_values(4)
     url_h_list = sheet_main.col_values(8)
-    log(f"✅ Data loaded. Shard focusing on indices {START_ROW} to {END_ROW}")
+    log(f"✅ Data Ready. Starting from Row {last_i + 1}")
 except Exception as e:
     log(f"❌ Connection Error: {e}"); sys.exit(1)
 
 # ---------------- MAIN LOOP ---------------- #
 driver = None
 batch_list = []
-BATCH_SIZE = 100 
+BATCH_SIZE = 25 # Smaller batch size so you see updates more often
 current_date = date.today().strftime("%m/%d/%Y")
 
 def flush_batch():
     global batch_list
     if not batch_list: return
-    for attempt in range(5):
+    log(f"🚀 UPLOADING BATCH: Sending {len(batch_list)//3} rows to Google Sheets...")
+    for attempt in range(3):
         try:
             sheet_data.batch_update(batch_list, value_input_option='RAW')
-            log(f"✅ [Shard {SHARD_INDEX}] Batch Written.")
+            log(f"✅ SUCCESS: Batch successfully written to Sheet2.")
             batch_list = []
             return
         except Exception as e:
+            log(f"⚠️ API Retry {attempt+1}: {str(e)[:50]}")
             time.sleep(30)
 
 def ensure_driver():
@@ -144,10 +148,9 @@ def ensure_driver():
     return driver
 
 try:
-    # Loop ONLY within the designated range for this shard
     for i in range(last_i, min(END_ROW, len(company_list))):
         name = company_list[i].strip()
-        log(f"--- [ROW {i+1}] {name} ---")
+        log(f"--- [ROW {i+1}] Processing: {name} ---")
 
         active_driver = ensure_driver()
         
@@ -163,8 +166,13 @@ try:
         batch_list.append({"range": f"J{row_idx}", "values": [[current_date]]})
         if combined:
             batch_list.append({"range": f"K{row_idx}", "values": [combined]})
+            log(f"   📥 Buffered {len(combined)} values into batch.")
         
-        if len(batch_list) >= (BATCH_SIZE * 3):
+        # Log Progress
+        progress = len(batch_list) // 3
+        log(f"📈 Shard Progress: {i+1}/{END_ROW} | Batch Buffer: {progress}/{BATCH_SIZE}")
+
+        if progress >= BATCH_SIZE:
             flush_batch()
 
         with open(checkpoint_file, "w") as f:
