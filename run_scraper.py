@@ -33,51 +33,59 @@ CHROME_DRIVER_PATH = ChromeDriverManager().install()
 def create_driver():
     log(f"🌐 [Shard {SHARD_INDEX}] Range {START_ROW+1}-{END_ROW} | Initializing...")
     opts = Options()
+    opts.page_load_strategy = "normal" # Changed back to normal for accuracy
     opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
-    # Speed Optimization: Disable heavy features
+    opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--blink-settings=imagesEnabled=false")
-    opts.add_argument("--disable-extensions")
-    opts.page_load_strategy = "eager" # Loads DOM but doesn't wait for all images/ads
+    opts.add_experimental_option("excludeSwitches", ["enable-logging"])
+    opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(service=Service(CHROME_DRIVER_PATH), options=opts)
-    driver.set_page_load_timeout(60)
+    driver.set_page_load_timeout(90)
 
     if os.path.exists("cookies.json"):
         try:
             driver.get("https://in.tradingview.com/")
+            time.sleep(4)
             with open("cookies.json", "r") as f:
                 cookies = json.load(f)
             for c in cookies:
                 try: driver.add_cookie({k: v for k, v in c.items() if k in ("name", "value", "path", "secure", "expiry")})
                 except: continue
             driver.refresh()
+            time.sleep(4)
         except: pass
     return driver
 
-# ---------------- OPTIMIZED SCRAPER ---------------- #
+# ---------------- ACCURATE SCRAPER ---------------- #
 def scrape_tradingview(driver, url, url_type=""):
     log(f"   📡 Navigating {url_type}...")
     try:
         driver.get(url)
-        # Smart Polling: Check for data every 2s instead of waiting 20s fixed
+        # Reduced initial wait to 12s (was 20s), then we poll
+        time.sleep(12)
+        
         final_values = []
-        for check in range(10): # Max 20 seconds total
+        for check in range(5): # Polling for another 10s if needed
             soup = BeautifulSoup(driver.page_source, "html.parser")
             v1 = [el.get_text().strip() for el in soup.find_all("div", class_="valueValue-l31H9iuA apply-common-tooltip")]
             v2 = [el.get_text().strip() for el in soup.find_all("div", class_=lambda x: x and 'valueValue' in x)]
+            # Restored XPath for maximum accuracy
+            v3 = [el.text.strip() for el in driver.find_elements(By.XPATH, "//div[contains(@class, 'value') and contains(@class, 'Value')]")]
             
-            raw_values = v1 or v2
+            raw_values = v1 or v2 or v3
             final_values = [str(v) for v in raw_values if v and v.strip()]
             
             if final_values:
-                log(f"   📊 Found {len(final_values)} values in {check*2}s")
+                log(f"   📊 Found {len(final_values)} values.")
                 return final_values
+            
+            # If not found, scroll and wait 2 more seconds
+            driver.execute_script("window.scrollTo(0, 400);")
             time.sleep(2)
-            # Small scroll to trigger lazy elements
-            if check == 2: driver.execute_script("window.scrollTo(0, 400);")
             
     except Exception as e:
         log(f"   ❌ {url_type} ERROR: {str(e)[:50]}")
@@ -97,13 +105,13 @@ except Exception as e:
 
 driver = create_driver()
 batch_list = []
-BATCH_SIZE = 30 # Slightly larger batch for efficiency
+BATCH_SIZE = 25 
 current_date = date.today().strftime("%m/%d/%Y")
 
 try:
     for i in range(last_i, min(END_ROW, len(company_list))):
         name = company_list[i].strip()
-        log(f"--- [ROW {i+1}] Processing: {name} ---")
+        log(f"--- [ROW {i+1}] {name} ---")
 
         u_d = url_d_list[i] if i < len(url_d_list) and url_d_list[i].startswith("http") else None
         u_h = url_h_list[i] if i < len(url_h_list) and url_h_list[i].startswith("http") else None
@@ -120,11 +128,12 @@ try:
         
         if len(batch_list) // 3 >= BATCH_SIZE:
             sheet_data.batch_update(batch_list, value_input_option='RAW')
-            log(f"🚀 UPLOADED BATCH (Row {i+1})")
+            log(f"🚀 BATCH SAVED.")
             batch_list = []
 
         with open(checkpoint_file, "w") as f:
             f.write(str(i + 1))
+        time.sleep(1)
 finally:
     if batch_list:
         sheet_data.batch_update(batch_list, value_input_option='RAW')
