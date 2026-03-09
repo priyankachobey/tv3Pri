@@ -1,4 +1,4 @@
-name: T3 Shards 10-14 (Rows 1021-1530)
+name: T3 Shards 10-14 (Rows 1021-1530) week
 
 on:
   workflow_dispatch:
