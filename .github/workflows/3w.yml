@@ -2,9 +2,7 @@ name: T3 Shards 10-14 (Rows 1021-1530) week
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '40 11 * * 1-5'
-
+  
 jobs:
   scrape:
     runs-on: ubuntu-22.04
